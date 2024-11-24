@@ -1,31 +1,36 @@
 package main
 
 import (
-	"di/repos"
 	"di/handlers"
+	"di/repos"
+	"di/services"
 	"fmt"
 	"reflect"
 )
 
 func main() {
 	di := NewDependencyContainer()
-	
+
 	Register[repos.RepoInterface, repos.RepoImpl](di)
 
-	handler := Instantiate[handlers.UserHandler](di).Handle
+	Singleton[services.SharedClient](di)
 
+	postHandler := InitHandler[handlers.PostHandler](di).Handle
+	userHandler := InitHandler[handlers.UserHandler](di).Handle
 
-
-	handler()
+	postHandler()
+	userHandler()
 }
 
 type DependencyContainer struct {
-	registry map[reflect.Type]reflect.Type
+	registry   map[reflect.Type]reflect.Type
+	singletons map[reflect.Type]reflect.Value
 }
 
 func NewDependencyContainer() *DependencyContainer {
 	return &DependencyContainer{
 		registry: make(map[reflect.Type]reflect.Type),
+		singletons: make(map[reflect.Type]reflect.Value),
 	}
 }
 
@@ -42,11 +47,31 @@ func Register[T interface{}, K interface{}](container *DependencyContainer) {
 	if !implType.Implements(iType) {
 		panic(fmt.Sprintf("Тип %s не реализует интерфейс %s", implType, iType))
 	}
-	if !implType.Implements(reflect.TypeOf((*Injectable)(nil)).Elem()) {
-		panic(fmt.Sprintf("Тип %s не реализует интерфейс Injectable", implType))
-	}
 
 	container.registry[iType] = implType
+}
+
+func Singleton[T interface{}](container *DependencyContainer) {
+	_implType := (*T)(nil)
+	implType := reflect.TypeOf(_implType)
+
+	if implType.Elem().Kind() == reflect.Interface {
+		panic("Singleton не может быть интерфейсом")
+	}
+
+	if implType.Kind() != reflect.Struct && implType.Kind() != reflect.Ptr {
+		panic("Singleton должен быть структурой или указателем на структуру")
+	}
+
+	singletonInstance := reflect.New(implType.Elem())
+	container.Enrich(singletonInstance.Interface())
+
+	container.singletons[implType] = singletonInstance
+}
+
+func (c *DependencyContainer) GetSingleton(searchType reflect.Type) (reflect.Value, bool) {
+	value, exists := c.singletons[searchType]
+	return value, exists
 }
 
 func (c *DependencyContainer) Resolve(interfaceType reflect.Type) reflect.Type {
@@ -57,44 +82,77 @@ func (c *DependencyContainer) Resolve(interfaceType reflect.Type) reflect.Type {
 	return implType
 }
 
-
-
-type Injectable interface {
-	// сработает когда был создан начальный экземпляр структуры, и поля еще не инициализированы
-	// можно инициализировать поля начальными данными
-	// а также можно инициализировать те поля которые Injectable, тем самым
-	// инъекция зависимостей для преинициализированных Injectable полей
-	// не будет осуществлена
-	AfterInstantiated()
+type Enrichable interface {
 	// сработает после того как инициализированы поля структуры
+	// можно обратиться к полям и выполнить некоторую логику
 	AfterEnriched()
 }
 
-func Instantiate[T Injectable](container *DependencyContainer) *T {
-	var instance T
-
-	if reflect.TypeOf(instance).Kind() == reflect.Interface {
-		panic("Нельзя инстанциировать интерфейс")
-	}
-
-	instance.AfterInstantiated()
-	container.Enrich(&instance)
-	instance.AfterEnriched()
-
-	return &instance
+type Instantiatable interface {
+	// сработает когда был создан начальный экземпляр структуры, и поля еще не инициализированы
+	// можно инициализировать поля начальными данными
+	// а также можно инициализировать те поля которые обозначены как
+	// `di:"enrich"` или `di:"instantiate"`, тем самым
+	// преинициализированные поля будут пропущены и не инициализированы повторно
+	AfterInstantiated()
 }
 
-// обогащаем инстанциированную структуру 
+func InitHandler[T any](container *DependencyContainer) *T {
+	handlerObjRaw := (*T)(nil)
+	handlerType := reflect.TypeOf(handlerObjRaw).Elem()
+
+	if handlerType.Kind() == reflect.Interface {
+		panic("Handler не может быть интерфейсом")
+	}
+
+	handlerValue := reflect.New(handlerType)
+	container.Enrich(handlerValue.Interface())
+
+	castedHandler, ok := handlerValue.Elem().Interface().(T)
+	if !ok {
+		panic("Не удалось произвести приведение типов при инициализации Handler")
+	}
+
+	return &castedHandler
+}
+
+const (
+	ignoreTag = "ignore"
+	enrichTag = "enrich"
+	instantiateTag = "instantiate"
+)
+
+// обогащаем инстанциированную структуру
 // инициализируя ее поля
 // функция вызывается рекурсивно для полей структуры
 func (c *DependencyContainer) Enrich(object any) {
 	objectValue := reflect.ValueOf(object).Elem()
 	objectType := objectValue.Type()
 
+	if method := reflect.ValueOf(object).MethodByName("AfterInstantiated"); 
+		method.IsValid() {
+		method.Call(nil)
+	}
+
 	for i := 0; i < objectType.NumField(); i++ {
 		fieldMetadata := objectType.Field(i)
 		fieldValue := objectValue.Field(i)
 		fieldType := fieldMetadata.Type
+		fieldTag := fieldMetadata.Tag.Get("di") 
+
+		// если нет тэга di, то пропускаем поле
+		if fieldTag == "" {
+			continue
+		} else if fieldTag != ignoreTag && 
+			fieldTag != enrichTag && 
+			fieldTag != instantiateTag {
+			panic(fmt.Sprintf("Невалидный di тэг: %s\n", fieldTag))
+		}
+
+		// инициализировать можно только либо указатель, либо интерфейс
+		if fieldType.Kind() != reflect.Ptr && fieldType.Kind() != reflect.Interface {
+			continue
+		}
 
 		// если поле преинициализированно, то пропускаем его
 		if !fieldValue.IsNil() {
@@ -106,54 +164,48 @@ func (c *DependencyContainer) Enrich(object any) {
 			continue
 		}
 
-		// инициализировать можно только либо указатель, либо интерфейс
-		if fieldType.Kind() != reflect.Ptr && fieldType.Kind() != reflect.Interface {
-			continue
-		}
-
 		if fieldType.Kind() == reflect.Interface {
 			// ищем в контейнере имплементацию интерфейса
 			// подставляем тип имплементации
 			fieldType = c.Resolve(fieldType)
 		}
 
+		switch fieldTag {
+		// если поле имеет тэг `di:"ignore"`
+		// то это поле будет пропущено
+		case ignoreTag:
+			continue
 		// если поле имеет тэг `di:"instantiate"`
 		// то будет создан экземпляр структуры,
 		// но его поля не будут инициализированы
-		if fieldMetadata.Tag.Get("di") == "instantiate" {
+		case instantiateTag:
 			newInstance := reflect.New(fieldType.Elem())
 			fieldValue.Set(newInstance)
+			if method := newInstance.MethodByName("AfterInstantiated"); 
+				method.IsValid() {
+				method.Call(nil)
+			}
+
+			continue
+		// если поле имеет тэг `di:"enrich"`
+		// то будет создан экземпляр структуры,
+		// и ее поля будут инициализированы
+		case enrichTag:
+			if singletone, exists := c.GetSingleton(fieldType); exists {
+				fieldValue.Set(singletone)
+				continue
+			} 
+			
+			newInstance := reflect.New(fieldType.Elem())
+			fieldValue.Set(newInstance)
+
+			c.Enrich(newInstance.Interface())
 			continue
 		}
+	}
 
-		// если поле является указателем на структуру, которая не реализует интерфейс Injectable,
-		// и у этого поля нет тэга `di:"enrich"`
-		// то поле не будет инициализировано
-		if !fieldType.Implements(reflect.TypeOf((*Injectable)(nil)).Elem()) &&
-			fieldMetadata.Tag.Get("di") != "enrich" {
-			continue
-		}
-
-		newInstance := reflect.New(fieldType.Elem())
-		fieldValue.Set(newInstance)
-
-		callAfterInstantiated(newInstance)
-		c.Enrich(newInstance.Interface())
-		callAfterEnriched(newInstance)
+	if method := reflect.ValueOf(object).MethodByName("AfterEnriched"); 
+		method.IsValid() {
+		method.Call(nil)
 	}
 }
-
-func callAfterInstantiated(instance reflect.Value) {
-	afterInstantiatedMethod := instance.MethodByName("AfterInstantiated")
-	if afterInstantiatedMethod.IsValid() {
-		afterInstantiatedMethod.Call(nil)
-	}
-}
-
-func callAfterEnriched(instance reflect.Value) {
-	afterProvidedMethod := instance.MethodByName("AfterEnriched")
-	if afterProvidedMethod.IsValid() {
-		afterProvidedMethod.Call(nil)
-	}
-}
-

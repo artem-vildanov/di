@@ -6,15 +6,13 @@ type RepoInterface interface {
 }
 
 type RepoProxy struct {
-	RepoImpl *RepoImpl
+	RepoImpl *RepoImpl `di:"enrich"`
 }
 
-func (RepoProxy) AfterInstantiated() {
-}
+func (RepoProxy) AfterInstantiated() {}
 func (RepoProxy) AfterEnriched() {}
 
 func (r RepoProxy) GetById(id string) {
-	println("get by id proxy fired")
 	r.RepoImpl.GetById(id)
 }
 
@@ -22,11 +20,8 @@ type RepoImpl struct {
 
 }
 
-func (RepoImpl) AfterInstantiated() {
-}
-func (RepoImpl) AfterEnriched() {
-}
+func (RepoImpl) AfterInstantiated() {}
+func (RepoImpl) AfterEnriched() {}
 
 func (RepoImpl) GetById(id string) {
-	println("get by id impl fired")
 }
