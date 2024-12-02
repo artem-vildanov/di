@@ -4,28 +4,22 @@ import (
 	"di/services"
 )
 
-type UserHandler struct {
-	Service *services.Service `di:"enrich"`
-}
-
-func (h *UserHandler) Handle() {
-	h.Service.DoSmth()
-	h.Service.InnerService.AnotherService.GreatLogic()
-}
-
 type PostHandler struct {
-	SharedClient *services.SharedClient `di:"enrich"`
+	SharedClient *services.SharedClient
+	service *services.Service
 }
 
-func (p PostHandler) AfterInstantiated() {
-}
-
-func (PostHandler) AfterEnriched() {
+func (p *PostHandler) Construct(
+	sharedClient *services.SharedClient,
+	service *services.Service,
+) {
+	p.SharedClient = sharedClient
+	p.service = service
 }
 
 func (p PostHandler) Handle() {
-	p.SharedClient.SomeValue = 4545
-	p.SharedClient.AnotherValue = "768766768768768766878"
+	println("post handler Handle fired")
+	p.service.DoSmth()
 	p.SharedClient.ClientLogic()
 }
 

@@ -1,79 +1,68 @@
 package services
 
-import "di/repos"
+import (
+	"di/repos"
+	"fmt"
+)
 
 
 type Service struct {
-	InnerService *NestedService `di:"enrich"`
-	Repo repos.RepoInterface `di:"enrich"`
-	SharedClient *SharedClient `di:"enrich"`
+	InnerService *NestedService
+	SharedClient *SharedClient
+	Repo repos.Repo
 }
 
-func (Service) AfterEnriched() {
-
-}
-
-func (Service) AfterInstantiated() {
-
+func (s *Service) Construct(
+	innerService *NestedService, 
+	sharedClient *SharedClient, 
+	repo repos.Repo,
+) {
+	s.InnerService = innerService
+	s.SharedClient = sharedClient
+	s.Repo = repo
 }
 
 func (s *Service) DoSmth() {
+	println("DoSmth from Service fired")
+	fmt.Printf("data from repo: %v", s.Repo.GetAll())
 	s.SharedClient.ClientLogic()
 	s.InnerService.SomeFunc()
 }
 
-
 type NestedService struct {
-	AnotherService *AnotherService `di:"instantiate"`
-	SharedClient *SharedClient `di:"enrich"`
+	AnotherService *AnotherService
+	SharedClient *SharedClient
 }
 
-func (NestedService) AfterInstantiated() {
-
-}
-
-func (n NestedService) AfterEnriched() {
-	n.SharedClient.ClientLogic()
-	n.AnotherService.GreatLogic()
+func (n *NestedService) Construct(
+	anotherService *AnotherService,
+	sharedClient *SharedClient,
+) {
+	n.AnotherService = anotherService
+	n.SharedClient = sharedClient
 }
 
 func (NestedService) SomeFunc() {
+	println("SomeFunc from NestedService fired")
 }
 
 
 type AnotherService struct {
 }
 
-func (AnotherService) AfterInstantiated() {
-}
-
-
-func (AnotherService) AfterEnriched() {
-}
-
 func (a AnotherService) GreatLogic() {
-	//fmt.Print("\n")
-	//for i := 0; i < 10; i++ {
-		//fmt.Print("_logic_")
-	//}
-	//fmt.Print("\n")
+	println("another service fired clientlogic")
 }
 
 type SharedClient struct {
-	SomeValue int
-	AnotherValue string
-	AnotherService *AnotherService `di:"enrich"`
+	AnotherService *AnotherService
 }
 
-func (s *SharedClient) AfterInstantiated() {
-	s.SomeValue = 79
-	s.AnotherValue = "akjwndkajwdbnajwhdkbawkjdhbawjdkhba"
-}
-
-func (SharedClient) AfterEnriched() {
+func (s *SharedClient) Construct(anotherService *AnotherService) {
+	s.AnotherService = anotherService
 }
 
 func (s SharedClient) ClientLogic() {
-	//fmt.Printf("\nSomeValue: %d, AnotherValue %s \n", s.SomeValue, s.AnotherValue)
+	println("shared service fired clientlogic")
 	s.AnotherService.GreatLogic()
 }
