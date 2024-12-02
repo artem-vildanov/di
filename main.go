@@ -34,6 +34,19 @@ func NewDependencyContainer() *DependencyContainer {
 	}
 }
 
+func (c *DependencyContainer) GetSingleton(searchType reflect.Type) (reflect.Value, bool) {
+	value, exists := c.singletons[searchType]
+	return value, exists
+}
+
+func (c *DependencyContainer) Resolve(interfaceType reflect.Type) reflect.Type {
+	implType, exists := c.registry[interfaceType]
+	if !exists {
+		panic(fmt.Sprintf("Для интерфейса %s не зарегистрирована реализация", interfaceType))
+	}
+	return implType
+}
+
 func Register[T interface{}, K interface{}](container *DependencyContainer) {
 	_iType := (*T)(nil)
 	_implType := (*K)(nil)
@@ -67,19 +80,6 @@ func Singleton[T interface{}](container *DependencyContainer) {
 	container.Enrich(singletonInstance.Interface())
 
 	container.singletons[implType] = singletonInstance
-}
-
-func (c *DependencyContainer) GetSingleton(searchType reflect.Type) (reflect.Value, bool) {
-	value, exists := c.singletons[searchType]
-	return value, exists
-}
-
-func (c *DependencyContainer) Resolve(interfaceType reflect.Type) reflect.Type {
-	implType, exists := c.registry[interfaceType]
-	if !exists {
-		panic(fmt.Sprintf("Для интерфейса %s не зарегистрирована реализация", interfaceType))
-	}
-	return implType
 }
 
 type Enrichable interface {
